@@ -1,7 +1,7 @@
 from app.common.responses import ErrorResponse
 from app.db.session import get_db
-from app.schemas.user import EmailQueryParam, UserCreate, UserResponse
-from app.services.user_service import create_user, find_user_by_email, get_users
+from app.schemas.user import EmailQueryParam, UserCreate, UserResponse, UserUpdate
+from app.services import user_service
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,7 +31,7 @@ async def create(
     db: AsyncSession = Depends(get_db)
 ):
 
-    return await create_user(db, data)
+    return await user_service.create_user(db, data)
 
 
 @router.get(
@@ -42,7 +42,7 @@ async def list_users(
     db: AsyncSession = Depends(get_db)
 ):
 
-    return await get_users(db)
+    return await user_service.get_users(db)
 
 
 @router.get(
@@ -54,4 +54,21 @@ async def get_user_by_email(
     db: AsyncSession = Depends(get_db)
 ):
 
-    return await find_user_by_email(db, query.email)
+    return await user_service.find_user_by_email(db, query.email)
+
+
+@router.put(
+    "/{user_id}",
+    status_code=204,
+    response_model=None
+)
+async def update_task(
+    user_id: str,
+    user: UserUpdate,
+    db: AsyncSession = Depends(get_db)
+):
+    return await user_service.update_user(
+        db,
+        user_id,
+        user
+    )

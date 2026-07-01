@@ -1,7 +1,12 @@
-from app.common.exceptions import NotFoundException
+from app.common.exceptions import (
+    ConflictException,
+    DatabaseException,
+    NotFoundException,
+)
 from app.db.models.user import User
-from app.schemas.user import UserCreate
-from sqlalchemy import select
+from app.schemas.user import UserCreate, UserUpdate
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -47,3 +52,24 @@ async def find_user_by_email(db: AsyncSession, email: str):
         )
 
     return user
+
+
+async def update_user(
+    db: AsyncSession,
+    user_id: str,
+    user: UserUpdate
+):
+    try:
+        await db.execute(update(User).where(User.id == user_id).values(
+            **user.model_dump(
+                exclude_unset=True
+            )
+        ))
+        await db.commit()
+        return None
+    except IntegrityError as exc:
+        await db.rollback()
+        raise ConflictException("User could not be updated") from exc
+    except SQLAlchemyError as exc:
+        await db.rollback()
+        raise DatabaseException() from exc
