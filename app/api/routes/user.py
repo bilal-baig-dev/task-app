@@ -62,7 +62,7 @@ async def get_user_by_email(
     status_code=204,
     response_model=None
 )
-async def update_task(
+async def update_user(
     user_id: str,
     user: UserUpdate,
     db: AsyncSession = Depends(get_db)

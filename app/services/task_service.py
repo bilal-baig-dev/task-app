@@ -1,7 +1,11 @@
-from app.common.exceptions import ConflictException, DatabaseException
+from app.common.exceptions import (
+    ConflictException,
+    DatabaseException,
+    NotFoundException,
+)
 from app.db.models.task import Task
 from app.schemas.task import TaskCreate, TaskUpdate
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -59,6 +63,38 @@ async def update_task(
     except IntegrityError as exc:
         await db.rollback()
         raise ConflictException("Task could not be updated") from exc
+    except SQLAlchemyError as exc:
+        await db.rollback()
+        raise DatabaseException() from exc
+
+
+async def delete_task(
+    db: AsyncSession,
+    task_id: str,
+) -> None:
+
+    try:
+        result = await db.execute(
+            delete(Task)
+            .where(Task.id == task_id)
+            .returning(Task.id)
+        )
+
+        deleted_task_id = result.scalar_one_or_none()
+        if deleted_task_id is None:
+            raise NotFoundException(
+                "Task not found"
+            )
+
+        await db.commit()
+        return None
+
+    except IntegrityError as exc:
+        await db.rollback()
+        raise ConflictException(
+            "Task cannot be deleted"
+        ) from exc
+
     except SQLAlchemyError as exc:
         await db.rollback()
         raise DatabaseException() from exc
