@@ -1,9 +1,10 @@
+
 from app.common.enums import StatusSeverity, TaskStatus
 from app.schemas.user import UserResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
-class TaskCreate(BaseModel):
+class TaskBase(BaseModel):
     name: str
     description: str | None = None
     group: str | None = None
@@ -11,7 +12,15 @@ class TaskCreate(BaseModel):
     status: TaskStatus = TaskStatus.NOT_STARTED
     start_time: str | None = None
     due_time: str | None = None
+
+
+class TaskCreate(TaskBase):
+    model_config = ConfigDict(extra="forbid")
     user_id: str
+
+
+class TaskUpdate(TaskBase):
+    model_config = ConfigDict(extra="forbid")
 
 
 class TaskResponse(BaseModel):

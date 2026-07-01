@@ -63,4 +63,5 @@ class Task(Base):
     user_id: Mapped[str] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
 
-    user: Mapped["User"] = relationship("User", back_populates="tasks")
+    user: Mapped["User"] = relationship("User", back_populates="tasks",
+                                        lazy="selectin")

@@ -1,6 +1,7 @@
 from app.common.exceptions import ConflictException, DatabaseException
 from app.db.models.task import Task
-from sqlalchemy import select
+from app.schemas.task import TaskCreate, TaskUpdate
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -22,21 +23,42 @@ async def get_task(
 
 async def create_task(
         db: AsyncSession,
-        task: Task
+        task: TaskCreate
 ):
 
     try:
-        task = Task(
-            **task.model_dump(),
-            user_id=task.user_id
+        new_task = Task(
+            **task.model_dump()
         )
-        db.add(task)
+
+        db.add(new_task)
         await db.commit()
-        await db.refresh(task)
-        return task
+        await db.refresh(new_task,  attribute_names=['user'])
+        return new_task
     except IntegrityError as exc:
         await db.rollback()
         raise ConflictException("Task could not be created") from exc
     except SQLAlchemyError as exc:
         await db.rollback()
+        raise DatabaseException() from exc
+
+
+async def update_task(
+        db: AsyncSession,
+        task_id: str,
+        task: TaskUpdate
+):
+    try:
+        print(**task.model_dump())
+        task = Task(
+            **task.model_dump(),
+        )
+        await db.execute(update(Task).where(Task.id == task_id).values(task))
+        return
+    except IntegrityError as exc:
+        await db.rollback()
+        raise ConflictException("Task could not be updated") from exc
+    except SQLAlchemyError as exc:
+        await db.rollback()
+        print(exc)
         raise DatabaseException() from exc
