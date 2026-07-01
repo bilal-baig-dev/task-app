@@ -61,5 +61,4 @@ async def update_task(
         raise ConflictException("Task could not be updated") from exc
     except SQLAlchemyError as exc:
         await db.rollback()
-        print(exc)
         raise DatabaseException() from exc
