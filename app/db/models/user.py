@@ -30,5 +30,6 @@ class User(Base):
     tasks: Mapped[list["Task"]] = relationship(
         "Task",
         back_populates="user",
-        cascade="all, delete"
+        cascade="all, delete",
+        lazy="selectin"
     )

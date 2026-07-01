@@ -49,12 +49,13 @@ async def update_task(
         task: TaskUpdate
 ):
     try:
-        print(**task.model_dump())
-        task = Task(
-            **task.model_dump(),
-        )
-        await db.execute(update(Task).where(Task.id == task_id).values(task))
-        return
+        await db.execute(update(Task).where(Task.id == task_id).values(
+            **task.model_dump(
+                exclude_unset=True
+            )
+        ))
+        await db.commit()
+        return None
     except IntegrityError as exc:
         await db.rollback()
         raise ConflictException("Task could not be updated") from exc

@@ -20,6 +20,13 @@ class TaskCreate(TaskBase):
 
 
 class TaskUpdate(TaskBase):
+    name: str | None = None
+    description: str | None = None
+    group: str | None = None
+    priority: StatusSeverity | None = None
+    status: TaskStatus | None = None
+    start_time: str | None = None
+    due_time: str | None = None
     model_config = ConfigDict(extra="forbid")
 
 

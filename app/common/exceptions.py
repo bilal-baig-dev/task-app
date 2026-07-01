@@ -69,3 +69,17 @@ class ForbiddenException(AppException):
             status=403,
             detail=detail
         )
+
+
+class DatabaseException(AppException):
+
+    def __init__(
+        self,
+        detail="Database operation failed"
+    ):
+        super().__init__(
+            type="/errors/database",
+            title="Database Error",
+            status=500,
+            detail=detail
+        )

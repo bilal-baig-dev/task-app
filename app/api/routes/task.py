@@ -1,6 +1,6 @@
 from app.common.responses import ErrorResponse
 from app.db.session import get_db
-from app.schemas.task import TaskCreate, TaskResponse
+from app.schemas.task import TaskCreate, TaskResponse, TaskUpdate
 from app.services import task_service
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,4 +42,21 @@ async def get_task(
     return await task_service.get_task(
         db,
         task_id
+    )
+
+
+@router.put(
+    "/{task_id}",
+    status_code=204,
+    response_model=None
+)
+async def update_task(
+    task_id: str,
+    task: TaskUpdate,
+    db: AsyncSession = Depends(get_db)
+):
+    return await task_service.update_task(
+        db,
+        task_id,
+        task
     )
