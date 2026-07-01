@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from app.api.routes.user import router
+from app.api.routes import task, user
 from app.common.exceptions import AppException
 from app.core.exception_handlers import app_exception_handler
 
@@ -17,7 +17,8 @@ app.add_exception_handler(
     AppException,
     app_exception_handler
 )
-app.include_router(router)
+app.include_router(user.router)
+app.include_router(task.router)
 
 
 @app.get("/health")

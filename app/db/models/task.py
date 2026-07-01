@@ -25,7 +25,6 @@ class Task(Base):
 
     name: Mapped[str] = mapped_column(
         String(255),
-        nullable=True
     )
 
     description: Mapped[str] = mapped_column(
@@ -55,9 +54,11 @@ class Task(Base):
         server_default=text("CURRENT_TIMESTAMP")
     )
 
-    start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    start_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True)
 
-    due_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    due_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True)
 
     user_id: Mapped[str] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
