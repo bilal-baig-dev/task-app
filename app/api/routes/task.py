@@ -14,7 +14,7 @@ router = APIRouter(
 @router.post(
     "",
     response_model=TaskResponse,
-    status_code=201,
+    status_code=status.HTTP_201_CREATED,
     responses={
         500: {
             "model": ErrorResponse,
