@@ -33,3 +33,8 @@ class User(Base):
         cascade="all, delete",
         lazy="selectin"
     )
+
+    password_hash: Mapped[str] = mapped_column(
+        String(255),
+        nullable=True
+    )
