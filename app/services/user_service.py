@@ -3,6 +3,7 @@ from app.common.exceptions import (
     DatabaseException,
     NotFoundException,
 )
+from app.core.security import hash_password
 from app.db.models.user import User
 from app.schemas.user import UserCreate, UserUpdate
 from sqlalchemy import select, update
@@ -17,7 +18,8 @@ async def create_user(
 
     user = User(
         email=data.email,
-        name=data.name
+        name=data.name,
+        password_hash=hash_password(data.password),
     )
 
     db.add(user)
