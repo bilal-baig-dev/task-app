@@ -83,7 +83,7 @@ async def delete_task(
         deleted_task_id = result.scalar_one_or_none()
         if deleted_task_id is None:
             raise NotFoundException(
-                "Task not found"
+                "Task not exists"
             )
 
         await db.commit()
