@@ -1,7 +1,7 @@
 
 from app.common.enums import StatusSeverity, TaskStatus
 from app.schemas.user import UserResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_serializer
 
 
 class TaskBase(BaseModel):
@@ -41,6 +41,11 @@ class TaskResponse(BaseModel):
     start_time: str | None = None
     due_time: str | None = None
     user: UserResponse | None = None
+
+    # Force the serializer to output the enum name instead of the number
+    @field_serializer("status")
+    def serialize_status(self, status: TaskStatus) -> str:
+        return status.name
 
     model_config = {
         "from_attributes": True
