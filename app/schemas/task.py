@@ -47,6 +47,10 @@ class TaskResponse(BaseModel):
     def serialize_status(self, status: TaskStatus) -> str:
         return status.name
 
+    @field_serializer("priority")
+    def serialize_priority(self, priority: StatusSeverity) -> str:
+        return priority.name
+
     model_config = {
         "from_attributes": True
     }
