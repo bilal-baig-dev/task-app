@@ -47,7 +47,3 @@ class UserResponse(BaseModel):
 
 class EmailQueryParam(BaseModel):
     email: EmailStr
-
-
-class UserNotFoundException(Exception):
-    pass
