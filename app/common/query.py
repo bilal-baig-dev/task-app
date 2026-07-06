@@ -43,9 +43,14 @@ Within a single field, multiple values are combined with OR (e.g.
 status IN [a,b,c] means "a OR b OR c"). Across DIFFERENT fields, conditions
 are combined with AND (e.g. status filter AND created_at range means both
 must hold). This matches standard multi-column-filter semantics (and what
-MUI DataGrid's own filter panel does). Nested/relationship/JSON dotted
-filters (e.g. "user.name") are intentionally NOT supported -- only the
-resource's own columns are filterable.
+MUI DataGrid's own filter panel does).
+
+One level of relationship traversal is supported via dotted syntax, e.g.
+"user.name". This compiles to a correlated EXISTS via SQLAlchemy's
+.has()/.any() comparators (never a JOIN), so row counts are never
+duplicated regardless of relationship cardinality. Anything deeper
+("user.profile.city") or JSON-field filtering is intentionally rejected
+to keep the surface area bounded.
 """
 
 from __future__ import annotations
@@ -177,6 +182,9 @@ def _as_list(value: Any) -> list[str]:
 def _build_conditions_for_field(
     intro: _ModelIntrospection, field: str, raw_value: Any
 ) -> list[ColumnElement[bool]]:
+    if "." in field:
+        return _build_nested_conditions(intro, field, raw_value)
+
     if field not in intro.columns:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -186,7 +194,63 @@ def _build_conditions_for_field(
     column: InstrumentedAttribute = getattr(intro.model, field)
     category = _column_category(intro.columns[field].type)
     values = _as_list(raw_value)
+    return _conditions_for_column(column, category, values, field)
 
+
+def _build_nested_conditions(
+    intro: _ModelIntrospection, dotted_field: str, raw_value: Any
+) -> list[ColumnElement[bool]]:
+    """
+    Supports exactly ONE level of relationship traversal: 'relation.field'.
+    Compiles to a correlated EXISTS (via SQLAlchemy's .has()/.any()
+    comparators) rather than a JOIN, so it never duplicates rows regardless
+    of whether the relationship is many-to-one or one-to-many. Deeper
+    nesting ('a.b.c') is rejected -- keep the surface area bounded.
+    """
+    relation_name, _, sub_field = dotted_field.partition(".")
+
+    if "." in sub_field:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"'{dotted_field}': only one level of nesting is supported (relation.field).",
+        )
+
+    if relation_name not in intro.relationships:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Field '{dotted_field}' is not filterable.",
+        )
+
+    relationship_prop = intro.model.__mapper__.relationships[relation_name]
+    related_model = relationship_prop.mapper.class_
+    related_columns = {c.key: c for c in relationship_prop.mapper.columns}
+
+    if sub_field not in related_columns:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Field '{dotted_field}' is not filterable.",
+        )
+
+    related_column = getattr(related_model, sub_field)
+    category = _column_category(related_columns[sub_field].type)
+    values = _as_list(raw_value)
+
+    sub_conditions = _conditions_for_column(
+        related_column, category, values, dotted_field)
+    if not sub_conditions:
+        return []
+    combined = sub_conditions[0] if len(
+        sub_conditions) == 1 else or_(*sub_conditions)
+
+    relationship_attr = getattr(intro.model, relation_name)
+    exists_condition = relationship_attr.any(
+        combined) if relationship_prop.uselist else relationship_attr.has(combined)
+    return [exists_condition]
+
+
+def _conditions_for_column(
+    column: InstrumentedAttribute, category: str, values: list[str], field_label: str
+) -> list[ColumnElement[bool]]:
     if not values:
         return []
 
@@ -199,15 +263,15 @@ def _build_conditions_for_field(
     if category == "boolean":
         # Exact match only, always a single value -- last one wins if an
         # array was sent by mistake.
-        return [column.is_(_coerce_boolean(values[-1], field))]
+        return [column.is_(_coerce_boolean(values[-1], field_label))]
 
     if category == "enum":
-        enum_cls: type[PyEnum] = intro.columns[field].type.enum_class
-        coerced = [_coerce_enum(enum_cls, v, field) for v in values]
+        enum_cls: type[PyEnum] = column.type.enum_class
+        coerced = [_coerce_enum(enum_cls, v, field_label) for v in values]
         return [column.in_(coerced)]
 
     if category == "date":
-        parsed = [_coerce_date(v, field) for v in values]
+        parsed = [_coerce_date(v, field_label) for v in values]
         if len(parsed) == 1:
             return [column == parsed[0]]
         if len(parsed) == 2:
@@ -215,21 +279,21 @@ def _build_conditions_for_field(
             return [column.between(lo, hi)]
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Field '{field}' accepts either 1 date or 2 dates (range).",
+            detail=f"Field '{field_label}' accepts either 1 date or 2 dates (range).",
         )
 
     if category == "datetime":
         if len(values) != 2:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Field '{field}' requires exactly 2 ISO datetimes: [start, end].",
+                detail=f"Field '{field_label}' requires exactly 2 ISO datetimes: [start, end].",
             )
-        lo, hi = sorted(_coerce_datetime(v, field) for v in values)
+        lo, hi = sorted(_coerce_datetime(v, field_label) for v in values)
         return [column.between(lo, hi)]
 
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
-        detail=f"Unsupported column type for field '{field}'.",
+        detail=f"Unsupported column type for field '{field_label}'.",
     )
 
 
