@@ -1,5 +1,10 @@
+from typing import Annotated
+
+from app.common.query import ListParams, list_query_params, list_records
 from app.common.responses import ErrorResponse
+from app.db.models import Task
 from app.db.session import get_db
+from app.schemas.common import PaginatedResponse
 from app.schemas.task import TaskCreate, TaskResponse, TaskUpdate
 from app.services import task_service
 from fastapi import APIRouter, Depends, status
@@ -75,3 +80,22 @@ async def delete_task(
         db,
         task_id
     )
+
+
+@router.get(
+    "",
+    status_code=status.HTTP_200_OK,
+    responses={status.HTTP_200_OK: {"model": PaginatedResponse[TaskResponse]}},
+)
+async def list_tasks(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    params: Annotated[ListParams, Depends(list_query_params)],
+) -> PaginatedResponse[TaskResponse]:
+    """
+    GET /tasks?page=1&pageSize=20
+        &filter={"name":"proj","status":["in_progress","done"],
+                 "due_time":["2026-07-01T00:00:00","2026-07-31T23:59:59"]}
+        &orderBy=priority desc&orderBy=due_time asc
+        &fields=id,name,status,due_time
+    """
+    return await list_records(db, Task, TaskResponse, params)
