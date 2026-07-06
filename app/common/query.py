@@ -9,29 +9,44 @@ Use the SAME three things for every resource in the app:
 Query params (exactly these, nothing else):
     page      -> 1-indexed page number
     pageSize  -> items per page
-    filter    -> repeatable, format "field:value"  (operator is auto-picked from column type)
+    filter    -> used ONCE. A JSON object string: {"field": value, ...}
     orderBy   -> repeatable, format "field direction"  e.g. "name desc"
     fields    -> comma-separated sparse fieldset, e.g. "id,name,status"
 
 Response shape (always):
     { "count": <int>, "data": [ ... ] }
 
-Filter semantics (per column type, auto-detected via SQLAlchemy column type):
-    string   -> ILIKE '%value%'                          (partial match)
-    number   -> CAST(col AS TEXT) ILIKE '%value%'         (partial match on int/float/numeric)
-    date     -> single value -> equality
-                two comma-separated values -> BETWEEN
-    datetime -> two comma-separated ISO values -> BETWEEN (start,end)
-    enum     -> comma-separated values -> IN (...)         (multi-select)
+--------------------------------------------------------------------------
+Filter param shape
+--------------------------------------------------------------------------
+`filter` is a single query param holding a JSON object. No colons, no
+delimiter-parsing ambiguity -- each key is a field name, each value is
+either a scalar or an array (for ranges / multi-select).
 
-All individual filter conditions (regardless of field) are combined with OR,
+    filter={"name":"proj","status":["in_progress","done"],
+            "due_time":["2026-07-01T00:00:00","2026-07-31T23:59:59"]}
+
+URL-encoded, that's just one `filter=...` in the query string -- this is
+also literally what MUI DataGrid's filterModel looks like, so the frontend
+can often just JSON.stringify() its own filter state and send it as-is.
+
+Filter semantics (per column type, auto-detected via SQLAlchemy column type):
+    string   -> ILIKE '%value%' per token                (partial match)
+    number   -> CAST(col AS TEXT) ILIKE '%value%' per token
+    date     -> 1 value -> equality
+                2 values -> BETWEEN
+    datetime -> exactly 2 values -> BETWEEN (start, end)
+    enum     -> 1+ values -> IN (...)                     (multi-select)
+    boolean  -> exact match, accepts true/false/1/0/yes/no
+
+All individual conditions (regardless of field) are combined with OR,
 per spec. Nested/relationship/JSON dotted filters (e.g. "user.name") are
 intentionally NOT supported -- only the resource's own columns are filterable.
-This keeps the surface area small, safe, and identical across every resource.
 """
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from dataclasses import field as dc_field
 from datetime import date, datetime
@@ -41,7 +56,18 @@ from typing import Any
 
 from fastapi import HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import Date, DateTime, Integer, Numeric, String, cast, func, or_, select
+from sqlalchemy import (
+    Boolean,
+    Date,
+    DateTime,
+    Integer,
+    Numeric,
+    String,
+    cast,
+    func,
+    or_,
+    select,
+)
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import DeclarativeBase, InstrumentedAttribute, noload, selectinload
@@ -55,7 +81,7 @@ from sqlalchemy.sql.elements import ColumnElement
 class ListParams:
     page: int
     page_size: int
-    filters: list[str] = dc_field(default_factory=list)
+    filters: dict[str, Any] = dc_field(default_factory=dict)
     order_by: list[str] = dc_field(default_factory=list)
     fields: str | None = None
 
@@ -63,8 +89,11 @@ class ListParams:
 def list_query_params(
     page: int = Query(1, ge=1, description="1-indexed page number"),
     pageSize: int = Query(20, ge=1, le=200, description="Items per page"),
-    filter: list[str] | None = Query(  # noqa: A002
-        None, description="Repeatable. Format 'field:value'."
+    filter: str | None = Query(  # noqa: A002
+        None,
+        description=(
+            'Single JSON object, e.g. {"name":"proj","status":["in_progress","done"]}'
+        ),
     ),
     orderBy: list[str] | None = Query(
         None, description="Repeatable. Format 'field direction', e.g. 'name desc'."
@@ -72,10 +101,26 @@ def list_query_params(
     fields: str | None = Query(
         None, description="Comma-separated fields to return."),
 ) -> ListParams:
+    filters: dict[str, Any] = {}
+    if filter:
+        try:
+            parsed = json.loads(filter)
+        except json.JSONDecodeError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="'filter' must be valid JSON, e.g. {\"name\":\"proj\"}.",
+            ) from None
+        if not isinstance(parsed, dict):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="'filter' must be a JSON object mapping field -> value.",
+            )
+        filters = parsed
+
     return ListParams(
         page=page,
         page_size=pageSize,
-        filters=filter or [],
+        filters=filters,
         order_by=orderBy or [],
         fields=fields,
     )
@@ -103,6 +148,8 @@ def _get_introspection(model: type[DeclarativeBase], schema: type[BaseModel]) ->
 def _column_category(sa_type: Any) -> str:
     if isinstance(sa_type, SAEnum):
         return "enum"
+    if isinstance(sa_type, Boolean):
+        return "boolean"
     if isinstance(sa_type, DateTime):
         return "datetime"
     if isinstance(sa_type, Date):
@@ -112,19 +159,19 @@ def _column_category(sa_type: Any) -> str:
     return "string"  # String, Text, Unicode, etc. -- safe default
 
 
-# --------------------------------------------------------------------------
-# 3. Filter condition builder -- one condition per "field:value" pair
-# --------------------------------------------------------------------------
-def _build_condition(intro: _ModelIntrospection, raw: str) -> ColumnElement[bool]:
-    field, sep, raw_value = raw.partition(":")
-    if not sep:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Malformed filter '{raw}'. Expected 'field:value'.",
-        )
-    field = field.strip()
-    raw_value = raw_value.strip()
+def _as_list(value: Any) -> list[str]:
+    """Normalize a filter value (scalar or array) into a list of strings."""
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip() != ""]
+    return [str(value).strip()]
 
+
+# --------------------------------------------------------------------------
+# 3. Filter condition builder -- one field:value(s) entry -> 1+ conditions
+# --------------------------------------------------------------------------
+def _build_conditions_for_field(
+    intro: _ModelIntrospection, field: str, raw_value: Any
+) -> list[ColumnElement[bool]]:
     if field not in intro.columns:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -133,50 +180,47 @@ def _build_condition(intro: _ModelIntrospection, raw: str) -> ColumnElement[bool
 
     column: InstrumentedAttribute = getattr(intro.model, field)
     category = _column_category(intro.columns[field].type)
+    values = _as_list(raw_value)
+
+    if not values:
+        return []
 
     if category == "string":
-        return column.ilike(f"%{raw_value}%")
+        return [column.ilike(f"%{v}%") for v in values]
 
     if category == "number":
-        return cast(column, String).ilike(f"%{raw_value}%")
+        return [cast(column, String).ilike(f"%{v}%") for v in values]
+
+    if category == "boolean":
+        # Exact match only, always a single value -- last one wins if an
+        # array was sent by mistake.
+        return [column.is_(_coerce_boolean(values[-1], field))]
 
     if category == "enum":
         enum_cls: type[PyEnum] = intro.columns[field].type.enum_class
-        values: list[PyEnum] = []
-        for token in raw_value.split(","):
-            token = token.strip()
-            if not token:
-                continue
-            values.append(_coerce_enum(enum_cls, token, field))
-        if not values:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"No valid values supplied for field '{field}'.",
-            )
-        return column.in_(values)
+        coerced = [_coerce_enum(enum_cls, v, field) for v in values]
+        return [column.in_(coerced)]
 
     if category == "date":
-        parts = [p.strip() for p in raw_value.split(",") if p.strip()]
-        parsed = [_coerce_date(p, field) for p in parts]
+        parsed = [_coerce_date(v, field) for v in values]
         if len(parsed) == 1:
-            return column == parsed[0]
+            return [column == parsed[0]]
         if len(parsed) == 2:
             lo, hi = sorted(parsed)
-            return column.between(lo, hi)
+            return [column.between(lo, hi)]
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Field '{field}' accepts either 1 date or 2 comma-separated dates (range).",
+            detail=f"Field '{field}' accepts either 1 date or 2 dates (range).",
         )
 
     if category == "datetime":
-        parts = [p.strip() for p in raw_value.split(",") if p.strip()]
-        if len(parts) != 2:
+        if len(values) != 2:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Field '{field}' requires exactly 2 comma-separated ISO datetimes (start,end).",
+                detail=f"Field '{field}' requires exactly 2 ISO datetimes: [start, end].",
             )
-        lo, hi = sorted(_coerce_datetime(p, field) for p in parts)
-        return column.between(lo, hi)
+        lo, hi = sorted(_coerce_datetime(v, field) for v in values)
+        return [column.between(lo, hi)]
 
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
@@ -195,6 +239,22 @@ def _coerce_enum(enum_cls: type[PyEnum], token: str, field: str) -> PyEnum:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid value '{token}' for enum field '{field}'.",
             ) from None
+
+
+_TRUE_TOKENS = {"true", "1", "yes"}
+_FALSE_TOKENS = {"false", "0", "no"}
+
+
+def _coerce_boolean(value: str, field: str) -> bool:
+    token = value.strip().lower()
+    if token in _TRUE_TOKENS:
+        return True
+    if token in _FALSE_TOKENS:
+        return False
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=f"Invalid boolean '{value}' for field '{field}'. Use true/false.",
+    )
 
 
 def _coerce_date(value: str, field: str) -> date:
@@ -249,7 +309,7 @@ def _build_order_clauses(intro: _ModelIntrospection, raw_order_by: list[str]) ->
 
 
 # --------------------------------------------------------------------------
-# 5. Sparse fieldset resolution + serialization
+# 5. Sparse fieldset resolution
 # --------------------------------------------------------------------------
 def _resolve_fields(intro: _ModelIntrospection, raw_fields: str | None) -> set[str]:
     if not raw_fields:
@@ -278,7 +338,9 @@ async def list_records(
 ) -> dict[str, Any]:
     intro = _get_introspection(model, schema)
 
-    conditions = [_build_condition(intro, raw) for raw in params.filters]
+    conditions: list[ColumnElement[bool]] = []
+    for field, raw_value in params.filters.items():
+        conditions.extend(_build_conditions_for_field(intro, field, raw_value))
     where_clause = or_(*conditions) if conditions else None
 
     # --- total count, same filter, no order/limit/joins ---
