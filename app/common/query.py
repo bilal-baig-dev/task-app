@@ -10,7 +10,7 @@ Query params (exactly these, nothing else):
     page      -> 1-indexed page number
     pageSize  -> items per page
     filter    -> used ONCE. A JSON object string: {"field": value, ...}
-    orderBy   -> repeatable, format "field direction"  e.g. "name desc"
+    orderBy   -> single value, format "field direction"  e.g. "name desc"
     fields    -> comma-separated sparse fieldset, e.g. "id,name,status"
 
 Response shape (always):
@@ -39,9 +39,13 @@ Filter semantics (per column type, auto-detected via SQLAlchemy column type):
     enum     -> 1+ values -> IN (...)                     (multi-select)
     boolean  -> exact match, accepts true/false/1/0/yes/no
 
-All individual conditions (regardless of field) are combined with OR,
-per spec. Nested/relationship/JSON dotted filters (e.g. "user.name") are
-intentionally NOT supported -- only the resource's own columns are filterable.
+Within a single field, multiple values are combined with OR (e.g.
+status IN [a,b,c] means "a OR b OR c"). Across DIFFERENT fields, conditions
+are combined with AND (e.g. status filter AND created_at range means both
+must hold). This matches standard multi-column-filter semantics (and what
+MUI DataGrid's own filter panel does). Nested/relationship/JSON dotted
+filters (e.g. "user.name") are intentionally NOT supported -- only the
+resource's own columns are filterable.
 """
 
 from __future__ import annotations
@@ -66,6 +70,7 @@ from sqlalchemy import (
     and_,
     cast,
     func,
+    or_,
     select,
 )
 from sqlalchemy import Enum as SAEnum
@@ -82,7 +87,7 @@ class ListParams:
     page: int
     page_size: int
     filters: dict[str, Any] = dc_field(default_factory=dict)
-    order_by: list[str] = dc_field(default_factory=list)
+    order_by: str | None = None
     fields: str | None = None
 
 
@@ -95,8 +100,8 @@ def list_query_params(
             'Single JSON object, e.g. {"name":"proj","status":["in_progress","done"]}'
         ),
     ),
-    orderBy: list[str] | None = Query(
-        None, description="Repeatable. Format 'field direction', e.g. 'name desc'."
+    orderBy: str | None = Query(
+        None, description="Single value. Format 'field direction', e.g. 'name desc'."
     ),
     fields: str | None = Query(
         None, description="Comma-separated fields to return."),
@@ -121,7 +126,7 @@ def list_query_params(
         page=page,
         page_size=pageSize,
         filters=filters,
-        order_by=orderBy or [],
+        order_by=orderBy,
         fields=fields,
     )
 
@@ -278,34 +283,31 @@ def _coerce_datetime(value: str, field: str) -> datetime:
 
 
 # --------------------------------------------------------------------------
-# 4. Order-by builder -- "field direction", top-level columns only
+# 4. Order-by builder -- single "field direction", top-level columns only
 # --------------------------------------------------------------------------
-def _build_order_clauses(intro: _ModelIntrospection, raw_order_by: list[str]) -> list[ColumnElement[Any]]:
+def _build_order_clause(intro: _ModelIntrospection, raw_order_by: str | None) -> ColumnElement[Any]:
     if not raw_order_by:
+        # Deterministic default: sort by primary key so pagination is stable.
         pk_columns = [c.key for c in intro.model.__mapper__.primary_key]
-        return [getattr(intro.model, pk).asc() for pk in pk_columns]
+        return getattr(intro.model, pk_columns[0]).asc()
 
-    clauses: list[ColumnElement[Any]] = []
-    for raw in raw_order_by:
-        parts = raw.strip().split()
-        field = parts[0]
-        direction = parts[1].lower() if len(parts) > 1 else "asc"
+    parts = raw_order_by.strip().split()
+    field = parts[0]
+    direction = parts[1].lower() if len(parts) > 1 else "asc"
 
-        if field not in intro.columns:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Field '{field}' is not sortable.",
-            )
-        if direction not in {"asc", "desc"}:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid sort direction '{direction}' for field '{field}'.",
-            )
+    if field not in intro.columns:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Field '{field}' is not sortable.",
+        )
+    if direction not in {"asc", "desc"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid sort direction '{direction}' for field '{field}'.",
+        )
 
-        column = getattr(intro.model, field)
-        clauses.append(column.asc() if direction == "asc" else column.desc())
-
-    return clauses
+    column = getattr(intro.model, field)
+    return column.asc() if direction == "asc" else column.desc()
 
 
 # --------------------------------------------------------------------------
@@ -338,10 +340,15 @@ async def list_records(
 ) -> dict[str, Any]:
     intro = _get_introspection(model, schema)
 
-    conditions: list[ColumnElement[bool]] = []
+    # Within a field: OR its values together. Across fields: AND them.
+    field_conditions: list[ColumnElement[bool]] = []
     for field, raw_value in params.filters.items():
-        conditions.extend(_build_conditions_for_field(intro, field, raw_value))
-    where_clause = and_(*conditions) if conditions else None
+        per_field = _build_conditions_for_field(intro, field, raw_value)
+        if not per_field:
+            continue
+        field_conditions.append(per_field[0] if len(
+            per_field) == 1 else or_(*per_field))
+    where_clause = and_(*field_conditions) if field_conditions else None
 
     # --- total count, same filter, no order/limit/joins ---
     count_stmt = select(func.count()).select_from(model)
@@ -355,7 +362,7 @@ async def list_records(
     stmt = select(model)
     if where_clause is not None:
         stmt = stmt.where(where_clause)
-    stmt = stmt.order_by(*_build_order_clauses(intro, params.order_by))
+    stmt = stmt.order_by(_build_order_clause(intro, params.order_by))
     stmt = stmt.offset((params.page - 1) *
                        params.page_size).limit(params.page_size)
 
