@@ -90,7 +90,7 @@ async def delete_task(
 async def list_tasks(
     db: Annotated[AsyncSession, Depends(get_db)],
     params: Annotated[ListParams, Depends(list_query_params)],
-) -> PaginatedResponse[TaskResponse]:
+):
     """
     GET /tasks?page=1&pageSize=20
         &filter={"name":"proj","status":["in_progress","done"],
