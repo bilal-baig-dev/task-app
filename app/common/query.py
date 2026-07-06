@@ -63,9 +63,9 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    and_,
     cast,
     func,
-    or_,
     select,
 )
 from sqlalchemy import Enum as SAEnum
@@ -341,7 +341,7 @@ async def list_records(
     conditions: list[ColumnElement[bool]] = []
     for field, raw_value in params.filters.items():
         conditions.extend(_build_conditions_for_field(intro, field, raw_value))
-    where_clause = or_(*conditions) if conditions else None
+    where_clause = and_(*conditions) if conditions else None
 
     # --- total count, same filter, no order/limit/joins ---
     count_stmt = select(func.count()).select_from(model)
