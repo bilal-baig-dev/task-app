@@ -51,6 +51,12 @@ One level of relationship traversal is supported via dotted syntax, e.g.
 duplicated regardless of relationship cardinality. Anything deeper
 ("user.profile.city") or JSON-field filtering is intentionally rejected
 to keep the surface area bounded.
+
+orderBy also supports one level of relationship traversal ("user.name
+desc"), but only for scalar relationships (many-to-one/one-to-one). This
+one DOES require a real LEFT OUTER JOIN (sorting can't be done via EXISTS),
+so it's rejected for collection relationships (e.g. sorting Users by a
+"tasks" field) since there's no single unambiguous value to sort by.
 """
 
 from __future__ import annotations
@@ -347,31 +353,77 @@ def _coerce_datetime(value: str, field: str) -> datetime:
 
 
 # --------------------------------------------------------------------------
-# 4. Order-by builder -- single "field direction", top-level columns only
+# 4. Order-by builder -- single "field direction"
+#    Supports one level of relation traversal ("user.name") for SCALAR
+#    relationships only (many-to-one / one-to-one). Collection relationships
+#    ("tasks" on User, uselist=True) are rejected -- sorting by "which one
+#    of many related rows" is inherently ambiguous, so we fail loudly
+#    instead of silently picking one.
 # --------------------------------------------------------------------------
-def _build_order_clause(intro: _ModelIntrospection, raw_order_by: str | None) -> ColumnElement[Any]:
+def _resolve_order_column(
+    intro: _ModelIntrospection, raw_order_by: str | None
+) -> tuple[ColumnElement[Any], InstrumentedAttribute | None]:
+    """Returns (order_clause, relation_to_join_or_None)."""
     if not raw_order_by:
         # Deterministic default: sort by primary key so pagination is stable.
         pk_columns = [c.key for c in intro.model.__mapper__.primary_key]
-        return getattr(intro.model, pk_columns[0]).asc()
+        return getattr(intro.model, pk_columns[0]).asc(), None
 
     parts = raw_order_by.strip().split()
     field = parts[0]
     direction = parts[1].lower() if len(parts) > 1 else "asc"
 
-    if field not in intro.columns:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Field '{field}' is not sortable.",
-        )
     if direction not in {"asc", "desc"}:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid sort direction '{direction}' for field '{field}'.",
         )
 
+    if "." in field:
+        relation_name, _, sub_field = field.partition(".")
+
+        if "." in sub_field:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"'{field}': only one level of nesting is supported (relation.field).",
+            )
+        if relation_name not in intro.relationships:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Field '{field}' is not sortable.",
+            )
+
+        relationship_prop = intro.model.__mapper__.relationships[relation_name]
+        if relationship_prop.uselist:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Field '{field}' is not sortable: '{relation_name}' is a "
+                    "collection relationship, so sorting by it is ambiguous."
+                ),
+            )
+
+        related_model = relationship_prop.mapper.class_
+        related_columns = {c.key: c for c in relationship_prop.mapper.columns}
+        if sub_field not in related_columns:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Field '{field}' is not sortable.",
+            )
+
+        column = getattr(related_model, sub_field)
+        relationship_attr = getattr(intro.model, relation_name)
+        clause = column.asc() if direction == "asc" else column.desc()
+        return clause, relationship_attr
+
+    if field not in intro.columns:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Field '{field}' is not sortable.",
+        )
+
     column = getattr(intro.model, field)
-    return column.asc() if direction == "asc" else column.desc()
+    return (column.asc() if direction == "asc" else column.desc()), None
 
 
 # --------------------------------------------------------------------------
@@ -426,7 +478,13 @@ async def list_records(
     stmt = select(model)
     if where_clause is not None:
         stmt = stmt.where(where_clause)
-    stmt = stmt.order_by(_build_order_clause(intro, params.order_by))
+
+    order_clause, join_relation = _resolve_order_column(intro, params.order_by)
+    if join_relation is not None:
+        # LEFT OUTER JOIN so rows with a NULL/absent related row aren't
+        # dropped from the result just because we're sorting on it.
+        stmt = stmt.join(join_relation, isouter=True)
+    stmt = stmt.order_by(order_clause)
     stmt = stmt.offset((params.page - 1) *
                        params.page_size).limit(params.page_size)
 
