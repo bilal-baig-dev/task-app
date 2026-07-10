@@ -1,3 +1,5 @@
+import hashlib
+
 from pwdlib import PasswordHash
 
 password_hasher = PasswordHash.recommended()
@@ -15,3 +17,9 @@ def verify_password(
         password,
         password_hash,
     )
+
+
+def hash_token(token: str) -> str:
+    return hashlib.sha256(
+        token.encode()
+    ).hexdigest()
