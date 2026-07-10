@@ -83,3 +83,12 @@ class DatabaseException(AppException):
             status=500,
             detail=detail
         )
+
+
+class InvalidTokenException(
+    UnauthorizedException
+):
+
+    def __init__(self, detail: str):
+
+        super().__init__(detail)
