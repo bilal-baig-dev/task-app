@@ -47,14 +47,10 @@ class LoginRequest(BaseModel):
         str_strip_whitespace=True,
     )
 
-    from pydantic import BaseModel
-
 
 class RegisterResponse(BaseModel):
 
     message: str
-
-    from app.schemas.common import Email
 
 
 class ResendVerificationEmailRequest(BaseModel):
@@ -64,3 +60,15 @@ class ResendVerificationEmailRequest(BaseModel):
     model_config = ConfigDict(
         extra="forbid"
     )
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "Bearer"
+    expires_in: int
+
+
+class RefreshRequest(BaseModel):
+
+    refresh_token: str
