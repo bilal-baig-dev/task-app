@@ -17,3 +17,13 @@ class ErrorResponse(BaseModel):
     traceId: str
     detail: str
     instance: str
+
+
+class SuccessResponse(BaseModel):
+
+    message: str = "Success"
+
+
+class DataResponse(BaseModel, Generic[T]):
+
+    data: T
