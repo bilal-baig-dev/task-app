@@ -1,7 +1,6 @@
 from app.common.exceptions import (
     ConflictException,
     DatabaseException,
-    NotFoundException,
 )
 from app.core.security import hash_password
 from app.db.models.user import User
@@ -48,11 +47,6 @@ async def find_user_by_email(db: AsyncSession, email: str):
 
     user = result.scalars().first()
 
-    if user is None:
-        raise NotFoundException(
-            "User with email does not exist"
-        )
-
     return user
 
 
@@ -75,3 +69,17 @@ async def update_user(
     except SQLAlchemyError as exc:
         await db.rollback()
         raise DatabaseException() from exc
+
+
+async def get_user_by_id(
+    db: AsyncSession,
+    user_id: str,
+) -> User | None:
+
+    result = await db.execute(
+        select(User).where(
+            User.id == user_id
+        )
+    )
+
+    return result.scalar_one_or_none()
