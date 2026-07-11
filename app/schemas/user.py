@@ -1,26 +1,17 @@
-from typing import Annotated
+
+from datetime import datetime
 
 from app.common.validators import validate_password
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from app.schemas.common import Email, Name, Password
+from pydantic import BaseModel, ConfigDict, EmailStr, field_validator
 
 
 class UserCreate(BaseModel):
 
-    email: EmailStr
-    name: str
+    email: Email
+    name: Name
 
-    password: Annotated[
-        str,
-        Field(
-            min_length=8,
-            max_length=128,
-            description=(
-                "Password must contain at least 8 characters, "
-                "one uppercase letter, one lowercase letter, "
-                "one digit, and one special character."
-            ),
-        ),
-    ]
+    password: Password
 
     model_config = ConfigDict(extra="forbid")
 
@@ -47,3 +38,30 @@ class UserResponse(BaseModel):
 
 class EmailQueryParam(BaseModel):
     email: EmailStr
+
+    from datetime import datetime
+
+
+class CurrentUserResponse(BaseModel):
+
+    id: str
+
+    email: EmailStr
+
+    name: str
+
+    is_verified: bool
+
+    is_active: bool
+
+    last_login_at: datetime | None
+
+    created_at: datetime
+
+    model_config = ConfigDict(
+        from_attributes=True
+    )
+
+
+class MeResponse(CurrentUserResponse):
+    pass
