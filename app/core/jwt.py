@@ -1,7 +1,9 @@
 import uuid
 from datetime import UTC, datetime, timedelta
+from secrets import token_urlsafe
 
 import jwt
+from app.common.constants import BYTES_COUNT
 from app.common.exceptions import InvalidTokenException
 from app.core.config import settings
 
@@ -44,17 +46,9 @@ def create_access_token(
     )
 
 
-def create_refresh_token(
-    user_id: str,
-) -> str:
+def create_refresh_token() -> str:
 
-    return _create_token(
-        user_id=user_id,
-        expires_delta=timedelta(
-            days=settings.REFRESH_TOKEN_EXPIRE_DAYS,
-        ),
-        token_type="refresh",
-    )
+    return token_urlsafe(BYTES_COUNT)
 
 
 def decode_token(
@@ -82,3 +76,14 @@ def verify_token(token: str) -> dict:
         raise InvalidTokenException(
             "Invalid token"
         )
+
+
+def decode_access_token(
+    token: str,
+) -> dict:
+
+    return jwt.decode(
+        token,
+        settings.SECRET_KEY,
+        algorithms=[settings.JWT_ALGORITHM],
+    )
