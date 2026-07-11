@@ -39,8 +39,6 @@ class UserResponse(BaseModel):
 class EmailQueryParam(BaseModel):
     email: EmailStr
 
-    from datetime import datetime
-
 
 class CurrentUserResponse(BaseModel):
 
