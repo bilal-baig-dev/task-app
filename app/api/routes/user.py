@@ -1,6 +1,6 @@
 from app.common.responses import ErrorResponse
 from app.db.session import get_db
-from app.schemas.user import EmailQueryParam, UserCreate, UserResponse, UserUpdate
+from app.schemas.user import UserCreate, UserResponse, UserUpdate
 from app.services import user_service
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,18 +43,6 @@ async def list_users(
 ):
 
     return await user_service.get_users(db)
-
-
-@router.get(
-    "/find-by-email",
-    response_model=UserResponse
-)
-async def get_user_by_email(
-    query: EmailQueryParam = Depends(),
-    db: AsyncSession = Depends(get_db)
-):
-
-    return await user_service.find_user_by_email(db, query.email)
 
 
 @router.put(
