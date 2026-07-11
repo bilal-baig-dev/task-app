@@ -39,13 +39,11 @@ Name = Annotated[
 
 Password = Annotated[
     str,
-    StringConstraints(
+    Field(
         min_length=8,
         max_length=128,
-        description=(
-            "Password must contain at least 8 characters, "
-            "one uppercase letter, one lowercase letter, "
-            "one digit, and one special character."
-        ),
+        description="Password must contain at least 8 characters, "
+        "one uppercase letter, one lowercase letter, "
+        "one digit, and one special character."
     ),
 ]
