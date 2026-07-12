@@ -4,15 +4,19 @@ from app.api.dependencies.auth import get_current_user
 from app.db.models import User
 from app.db.session import get_db
 from app.schemas.auth import (
+    ChangePasswordRequest,
+    ForgotPasswordRequest,
     LoginRequest,
     RefreshRequest,
     RegisterRequest,
+    ResetPasswordRequest,
     TokenResponse,
 )
 from app.schemas.user import UserResponse
 from app.services import auth_service
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette import status
 
 router = APIRouter(
     prefix="/auth",
@@ -94,3 +98,63 @@ async def me(
 ):
 
     return current_user
+
+
+@router.post(
+    "/change-password",
+    status_code=204,
+)
+async def change_password(
+    request: ChangePasswordRequest,
+    current_user: Annotated[
+        User,
+        Depends(get_current_user),
+    ],
+    db: Annotated[
+        AsyncSession,
+        Depends(get_db),
+    ],
+
+):
+
+    await auth_service.change_password(
+        db,
+        current_user,
+        request,
+    )
+
+
+@router.post(
+    "/forgot-password",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def forgot_password(
+    request: ForgotPasswordRequest,
+    db: Annotated[
+        AsyncSession,
+        Depends(get_db),
+    ],
+):
+
+    await auth_service.forgot_password(
+        db,
+        request.email,
+    )
+
+
+@router.post(
+    "/reset-password",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def reset_password(
+    request: ResetPasswordRequest,
+    db: Annotated[
+        AsyncSession,
+        Depends(get_db),
+    ],
+):
+
+    await auth_service.reset_password(
+        db,
+        request,
+    )

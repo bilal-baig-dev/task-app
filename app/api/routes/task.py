@@ -1,8 +1,9 @@
 from typing import Annotated
 
+from app.api.dependencies.auth import get_current_user
 from app.common.query import ListParams, list_query_params, list_records
 from app.common.responses import ErrorResponse
-from app.db.models import Task
+from app.db.models import Task, User
 from app.db.session import get_db
 from app.schemas.common import PaginatedResponse
 from app.schemas.task import TaskCreate, TaskResponse, TaskUpdate
@@ -89,6 +90,10 @@ async def delete_task(
 )
 async def list_tasks(
     db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[
+        User,
+        Depends(get_current_user),
+    ],
     params: Annotated[ListParams, Depends(list_query_params)],
 ):
     """
