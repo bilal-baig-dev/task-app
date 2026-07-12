@@ -92,3 +92,15 @@ class InvalidTokenException(
     def __init__(self, detail: str):
 
         super().__init__(detail)
+
+
+class ValidationException(AppException):
+
+    def __init__(self, detail: str):
+
+        super().__init__(
+            type="/errors/validation",
+            title="Validation Error",
+            status=422,
+            detail=detail
+        )
