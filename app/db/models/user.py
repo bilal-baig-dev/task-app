@@ -7,6 +7,7 @@ from sqlalchemy import Boolean, DateTime, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 if TYPE_CHECKING:
+    from app.db.models.password_reset_token import PasswordResetToken
     from app.db.models.refresh_token import RefreshToken
     from app.db.models.task import Task
 
@@ -74,6 +75,12 @@ class User(Base):
     )
 
     refresh_tokens: Mapped[list["RefreshToken"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
+    password_reset_tokens: Mapped[list["PasswordResetToken"]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
         lazy="selectin",
