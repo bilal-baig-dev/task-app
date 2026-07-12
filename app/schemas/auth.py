@@ -72,3 +72,20 @@ class TokenResponse(BaseModel):
 class RefreshRequest(BaseModel):
 
     refresh_token: str
+
+
+class ChangePasswordRequest(BaseModel):
+
+    current_password: str
+    new_password: str
+
+
+class ResetPasswordRequest(BaseModel):
+
+    token: str
+    new_password: str
+
+
+class ForgotPasswordRequest(BaseModel):
+
+    email: str

@@ -53,3 +53,15 @@ async def delete_expired(
     )
 
     await db.commit()
+
+
+async def delete_all_by_user(
+    db: AsyncSession,
+    user_id: str,
+) -> None:
+
+    await db.execute(
+        delete(RefreshToken).where(
+            RefreshToken.user_id == user_id
+        )
+    )

@@ -2,20 +2,34 @@
 from datetime import datetime, timedelta
 
 from app.common.constants import MINTUE_TO_SECONDS
-from app.common.exceptions import ConflictException, UnauthorizedException
+from app.common.exceptions import (
+    ConflictException,
+    DatabaseException,
+    UnauthorizedException,
+    ValidationException,
+)
 from app.core.config import settings
 from app.core.jwt import create_access_token, create_refresh_token, decode_access_token
-from app.core.security import hash_password, verify_password
+from app.core.security import (
+    generate_password_reset_token,
+    hash_password,
+    hash_reset_token,
+    verify_password,
+)
 from app.core.security import hash_token as hash_refresh_token
-from app.db.models import RefreshToken, User
+from app.db.models import PasswordResetToken, RefreshToken, User
 from app.schemas.auth import (
+    ChangePasswordRequest,
     LoginRequest,
     RefreshRequest,
     RegisterRequest,
+    ResetPasswordRequest,
     TokenResponse,
 )
-from app.services import refresh_token_service, user_service
+from app.services import email_service as EmailService
+from app.services import password_reset_service, refresh_token_service, user_service
 from jose import JWTError
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -232,3 +246,134 @@ async def get_current_user(
         )
 
     return user
+
+
+async def change_password(
+    db: AsyncSession,
+    current_user: User,
+    request: ChangePasswordRequest,
+) -> None:
+
+    if not verify_password(
+        request.current_password,
+        current_user.password_hash,
+    ):
+
+        raise UnauthorizedException(
+            "Current password is incorrect."
+        )
+
+    if verify_password(
+        request.new_password,
+        current_user.password_hash,
+    ):
+
+        raise ValidationException(
+            "New password must be different."
+        )
+
+    current_user.password_hash = hash_password(
+        request.new_password
+    )
+
+    await db.commit()
+
+
+async def forgot_password(
+    db: AsyncSession,
+    email: str,
+) -> None:
+
+    user = await user_service.find_user_by_email(
+        db,
+        email,
+    )
+
+    #
+    # IMPORTANT
+    #
+    # Never reveal whether an account exists.
+    #
+    if user is None:
+        return
+
+    raw_token = generate_password_reset_token()
+
+    token = PasswordResetToken(
+        token_hash=hash_reset_token(raw_token),
+        expires_at=datetime.now(datetime.UTC)
+        + timedelta(
+            minutes=settings.PASSWORD_RESET_TOKEN_EXPIRE_MINUTES
+        ),
+        user_id=user.id,
+    )
+
+    await password_reset_service.create(
+        db,
+        token,
+    )
+
+    await db.commit()
+
+    reset_link = (
+        f"{settings.FRONTEND_URL}"
+        f"/reset-password"
+        f"?token={raw_token}"
+    )
+
+    await EmailService.send_password_reset_email(
+        email=user.email,
+        reset_link=reset_link,
+    )
+
+
+async def reset_password(
+    db: AsyncSession,
+    request: ResetPasswordRequest,
+) -> None:
+    try:
+        token = await password_reset_service.get_valid_token(
+            db,
+            hash_reset_token(
+                request.token
+            ),
+        )
+
+        if token is None:
+
+            raise UnauthorizedException(
+                "Invalid or expired password reset token."
+            )
+
+        user = token.user
+
+        if verify_password(
+            request.new_password,
+            user.password_hash,
+        ):
+
+            raise ValidationException(
+                "New password must be different from the current password."
+            )
+
+        user.password_hash = hash_password(
+            request.new_password
+        )
+
+        await refresh_token_service.delete_all_by_user(
+            db,
+            user.id,
+        )
+
+        await password_reset_service.delete_user_tokens(
+            db,
+            user.id,
+        )
+
+        await db.commit()
+
+    except SQLAlchemyError as exc:
+
+        await db.rollback()
+
+        raise DatabaseException() from exc
