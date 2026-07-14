@@ -1,9 +1,9 @@
 from typing import Annotated
 
 from app.api.dependencies.auth import get_current_user
-from app.common.query import ListParams, list_query_params, list_records
+from app.common.query import ListParams, list_query_params
 from app.common.responses import ErrorResponse
-from app.db.models import Task, User
+from app.db.models import User
 from app.db.session import get_db
 from app.schemas.common import PaginatedResponse
 from app.schemas.task import TaskCreate, TaskResponse, TaskUpdate
@@ -103,4 +103,4 @@ async def list_tasks(
         &orderBy=priority desc&orderBy=due_time asc
         &fields=id,name,status,due_time
     """
-    return await list_records(db, Task, TaskResponse, params)
+    return await task_service.list_tasks(db, current_user, params)
