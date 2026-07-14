@@ -453,7 +453,17 @@ async def list_records(
     model: type[DeclarativeBase],
     schema: type[BaseModel],
     params: ListParams,
+    *,
+    extra_conditions: list[ColumnElement[bool]] | None = None,
 ) -> dict[str, Any]:
+    """
+    extra_conditions: trusted, server-side-only WHERE conditions (e.g. row
+    ownership / tenant scoping). These are NEVER derived from client input
+    -- they're always ANDed on top of whatever the client's `filter` JSON
+    produced, so a client can narrow what it sees but can never widen it
+    past what extra_conditions allows. Callers build these in a service
+    layer, not from params.filters.
+    """
     intro = _get_introspection(model, schema)
 
     # Within a field: OR its values together. Across fields: AND them.
@@ -464,7 +474,9 @@ async def list_records(
             continue
         field_conditions.append(per_field[0] if len(
             per_field) == 1 else or_(*per_field))
-    where_clause = and_(*field_conditions) if field_conditions else None
+
+    all_conditions = field_conditions + list(extra_conditions or [])
+    where_clause = and_(*all_conditions) if all_conditions else None
 
     # --- total count, same filter, no order/limit/joins ---
     count_stmt = select(func.count()).select_from(model)
