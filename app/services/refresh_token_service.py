@@ -1,5 +1,5 @@
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from app.db.models import RefreshToken
 from sqlalchemy import delete, select
@@ -48,7 +48,7 @@ async def delete_expired(
 
     await db.execute(
         delete(RefreshToken).where(
-            RefreshToken.expires_at < datetime.now(datetime.UTC)
+            RefreshToken.expires_at < datetime.now(UTC)
         )
     )
 

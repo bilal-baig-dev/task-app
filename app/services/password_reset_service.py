@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 from app.db.models.password_reset_token import PasswordResetToken
 from sqlalchemy import delete, select, update
@@ -69,7 +69,7 @@ async def delete_expired(
         delete(PasswordResetToken)
         .where(
             PasswordResetToken.expires_at
-            < datetime.now(datetime.UTC)
+            < datetime.now(UTC)
         )
     )
 
@@ -84,7 +84,7 @@ async def get_valid_token(
         .where(
             PasswordResetToken.token_hash == token_hash,
             PasswordResetToken.used.is_(False),
-            PasswordResetToken.expires_at > datetime.now(datetime.UTC)
+            PasswordResetToken.expires_at > datetime.now(UTC)
         )
     )
 
