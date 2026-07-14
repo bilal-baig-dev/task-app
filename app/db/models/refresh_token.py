@@ -27,6 +27,7 @@ class RefreshToken(Base):
         nullable=False,
         unique=True,
         index=True,
+        default=lambda: str(uuid.uuid4()),
     )
 
     token_hash: Mapped[str] = mapped_column(
