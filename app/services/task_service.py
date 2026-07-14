@@ -3,8 +3,10 @@ from app.common.exceptions import (
     DatabaseException,
     NotFoundException,
 )
-from app.db.models.task import Task
-from app.schemas.task import TaskCreate, TaskUpdate
+from app.common.query import ListParams, list_records
+from app.db.models import Task, User
+from app.schemas.common import PaginatedResponse
+from app.schemas.task import TaskCreate, TaskResponse, TaskUpdate
 from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -98,3 +100,12 @@ async def delete_task(
     except SQLAlchemyError as exc:
         await db.rollback()
         raise DatabaseException() from exc
+
+
+async def list_tasks(
+    db: AsyncSession,
+    current_user: User,
+    params: ListParams
+) -> PaginatedResponse[TaskResponse]:
+    return await list_records(db, Task, TaskResponse, params,
+                              extra_conditions=[Task.user_id == current_user.id])
