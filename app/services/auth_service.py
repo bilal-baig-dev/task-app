@@ -1,5 +1,5 @@
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from app.common.constants import MINTUE_TO_SECONDS
 from app.common.exceptions import (
@@ -98,27 +98,27 @@ async def login(
         refresh_token,
     )
 
-    expires_at = datetime.now(datetime.UTC) + timedelta(
+    expires_at = datetime.now(UTC) + timedelta(
         days=settings.REFRESH_TOKEN_EXPIRE_DAYS,
     )
 
     # Create a new RefreshToken instance and add it to the database
-    refresh_token = RefreshToken(
+    refresh_token_db_object = RefreshToken(
         token_hash=hashed_token,
         user_id=user.id,
-        expires_at=expires_at,
-    ),
+        expires_at=expires_at
+    )
 
-    db.add(refresh_token)
+    db.add(refresh_token_db_object)
 
     await db.commit()
-    await db.refresh(refresh_token)
+    await db.refresh(refresh_token_db_object)
 
     # Return the access token and refresh token in the response
     return TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token,
-        expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * MINTUE_TO_SECONDS,
+        expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * MINTUE_TO_SECONDS
     )
 
 
@@ -146,7 +146,7 @@ async def refresh(
             "Refresh token revoked."
         )
 
-    if session.expires_at < datetime.now(datetime.UTC):
+    if session.expires_at < datetime.now(UTC):
         raise UnauthorizedException(
             "Refresh token expired."
         )
@@ -162,7 +162,7 @@ async def refresh(
         new_refresh,
     )
 
-    expires_at = datetime.now(datetime.UTC) + timedelta(
+    expires_at = datetime.now(UTC) + timedelta(
         days=settings.REFRESH_TOKEN_EXPIRE_DAYS,
     )
 
@@ -170,7 +170,7 @@ async def refresh(
     refresh_token = RefreshToken(
         token_hash=hashed_new,
         user_id=session.user_id,
-        expires_at=expires_at,
+        expires_at=expires_at
     ),
 
     db.add(refresh_token)
@@ -185,7 +185,7 @@ async def refresh(
     return TokenResponse(
         access_token=access,
         refresh_token=new_refresh,
-        expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * MINTUE_TO_SECONDS,
+        expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * MINTUE_TO_SECONDS
     )
 
 
@@ -195,12 +195,12 @@ async def logout(
 ) -> None:
 
     hashed = hash_refresh_token(
-        refresh_token,
+        refresh_token
     )
 
     token = await refresh_token_service.get_refresh_token(
         db,
-        hashed,
+        hashed
     )
 
     if token is None:
@@ -208,7 +208,7 @@ async def logout(
 
     await refresh_token_service.revoke(
         db,
-        token,
+        token
     )
 
 
@@ -256,7 +256,7 @@ async def change_password(
 
     if not verify_password(
         request.current_password,
-        current_user.password_hash,
+        current_user.password_hash
     ):
 
         raise UnauthorizedException(
@@ -301,11 +301,11 @@ async def forgot_password(
 
     token = PasswordResetToken(
         token_hash=hash_reset_token(raw_token),
-        expires_at=datetime.now(datetime.UTC)
+        expires_at=datetime.now(UTC)
         + timedelta(
             minutes=settings.PASSWORD_RESET_TOKEN_EXPIRE_MINUTES
         ),
-        user_id=user.id,
+        user_id=user.id
     )
 
     await password_reset_service.create(
@@ -323,7 +323,7 @@ async def forgot_password(
 
     await EmailService.send_password_reset_email(
         email=user.email,
-        reset_link=reset_link,
+        reset_link=reset_link
     )
 
 
@@ -349,7 +349,7 @@ async def reset_password(
 
         if verify_password(
             request.new_password,
-            user.password_hash,
+            user.password_hash
         ):
 
             raise ValidationException(
@@ -362,12 +362,12 @@ async def reset_password(
 
         await refresh_token_service.delete_all_by_user(
             db,
-            user.id,
+            user.id
         )
 
         await password_reset_service.delete_user_tokens(
             db,
-            user.id,
+            user.id
         )
 
         await db.commit()
